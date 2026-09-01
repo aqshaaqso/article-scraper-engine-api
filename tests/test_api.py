@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from article_scraper_lab.config import get_settings
-from article_scraper_lab.dependencies import get_scraper_service
+from article_scraper_lab.dependencies import get_job_manager, get_scraper_service
 from article_scraper_lab.main import app
 
 
@@ -60,14 +60,16 @@ def test_async_job_is_limited_to_one_hundred_urls() -> None:
 def test_api_key_protects_job_history_when_configured(monkeypatch) -> None:
     monkeypatch.setenv("SCRAPER_API_KEY", "test-secret")
     get_settings.cache_clear()
+    get_job_manager.cache_clear()
     try:
-        client = TestClient(app)
-        assert client.get("/v1/jobs").status_code == 401
-        assert client.get("/v1/jobs", headers={"X-API-Key": "wrong"}).status_code == 401
-        assert (
-            client.get("/v1/jobs", headers={"X-API-Key": "test-secret"}).status_code == 200
-        )
+        with TestClient(app) as client:
+            assert client.get("/v1/jobs").status_code == 401
+            assert client.get("/v1/jobs", headers={"X-API-Key": "wrong"}).status_code == 401
+            assert (
+                client.get("/v1/jobs", headers={"X-API-Key": "test-secret"}).status_code == 200
+            )
     finally:
+        get_job_manager.cache_clear()
         get_settings.cache_clear()
 
 
