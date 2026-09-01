@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "article-scraper-lab"
+version = "0.1.0"
+description = "Security-conscious article scraper engine API with FastAPI and Trafilatura"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4>=4.12,<5.0",
+    "fastapi>=0.116,<1.0",
+    "httpx2>=2.12,<3.0",
+    "lxml-html-clean>=0.4,<1.0",
+    "python-dotenv>=1.0,<2.0",
+    "trafilatura>=2.2,<3.0",
+    "uvicorn>=0.35,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9.0",
+    "ruff>=0.12,<1.0",
+]
+
+[tool.fastapi]
+entrypoint = "article_scraper_lab.main:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

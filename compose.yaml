@@ -1,0 +1,16 @@
+services:
+  article-scraper:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /app/data/article_scraper.db
+      REQUIRE_API_KEY: "true"
+    ports:
+      - "8010:8010"
+    volumes:
+      - article-scraper-data:/app/data
+
+volumes:
+  article-scraper-data:
