@@ -52,6 +52,7 @@ class Settings:
     domain_delay_seconds: float
     database_path: Path
     api_key: str | None
+    serpapi_api_key: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -84,6 +85,7 @@ class Settings:
             domain_delay_seconds=_positive_float("DOMAIN_DELAY_SECONDS", 1.0),
             database_path=database_path,
             api_key=api_key,
+            serpapi_api_key=os.getenv("SERPAPI_API_KEY", "").strip() or None,
         )
 
 

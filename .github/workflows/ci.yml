@@ -15,7 +15,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install dependencies
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -r requirements.lock -e ".[dev]"
       - name: Lint
         run: python -m ruff check .
       - name: Test
@@ -28,3 +28,21 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build image
         run: docker build --tag article-scraper-engine-api:${{ github.sha }} .
+      - name: Smoke test container
+        run: |
+          docker run -d --name smoke -p 127.0.0.1:8010:8010 \
+            -e REQUIRE_API_KEY=true -e SCRAPER_API_KEY=ci-test-key \
+            article-scraper-engine-api:${{ github.sha }}
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8010/health; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8010/health
+          curl -fsS http://127.0.0.1:8010/swagger/index.html > /dev/null
+          curl -fsS http://127.0.0.1:8010/openapi.json | python -c 'import json,sys; d=json.load(sys.stdin); assert "/v1/search/jobs" in d["paths"]'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8010/v1/jobs)" = 401
+          curl -fsS -H 'X-API-Key: ci-test-key' http://127.0.0.1:8010/v1/jobs
+          docker exec smoke python -m pip check
+      - name: Container logs
+        if: always()
+        run: docker logs smoke || true

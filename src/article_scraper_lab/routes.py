@@ -12,7 +12,10 @@ from .models import (
     JobAccepted,
     JobResponse,
     ScrapeRequest,
+    SearchAccepted,
+    SearchRequest,
 )
+from .search import search_and_submit
 
 router = APIRouter(prefix="/v1/articles", tags=["Articles"])
 
@@ -58,6 +61,25 @@ def recent_jobs(manager: JobManagerDep, _api_key: ApiKeyDep) -> list[JobResponse
 
 
 system_router = APIRouter(tags=["System"])
+
+search_router = APIRouter(prefix="/v1/search", tags=["Search news"])
+
+
+@search_router.post(
+    "/jobs",
+    status_code=202,
+    summary="Cari berita lalu scrape otomatis",
+    description="Cari URL via SerpAPI, filter domain, lalu antrekan scraping. "
+    "Ambil JSON artikel lengkap melalui result_url / GET /v1/jobs/{job_id}.",
+)
+def search_news(
+    body: SearchRequest,
+    settings: SettingsDep,
+    service: ScraperServiceDep,
+    manager: JobManagerDep,
+    _api_key: ApiKeyDep,
+) -> SearchAccepted:
+    return search_and_submit(body, settings, service, manager)
 
 
 @system_router.get("/health", summary="Periksa konfigurasi scraper")

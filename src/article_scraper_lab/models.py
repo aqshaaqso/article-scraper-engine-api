@@ -104,3 +104,28 @@ class JobResponse(BaseModel):
         description="Durasi sejak worker pertama mulai sampai job selesai atau saat ini",
     )
     items: list[JobItemResponse] = Field(default_factory=list)
+
+
+class SearchRequest(BaseModel):
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        json_schema_extra={
+            "example": {"query": "anak gunung krakatau", "max_articles": 50, "max_pages": 5}
+        },
+    )
+    query: str = Field(min_length=2, max_length=300)
+    max_articles: int = Field(default=50, ge=1, le=50)
+    max_pages: int = Field(
+        default=5, ge=1, le=5, description="Batas request SerpAPI; tiap halaman memakai kuota"
+    )
+
+
+class SearchAccepted(BaseModel):
+    query: str
+    status: str
+    job_id: str | None = None
+    total: int
+    pages_fetched: int
+    skipped: int
+    urls: list[str]
+    result_url: str | None = None

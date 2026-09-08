@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from . import __version__
 from .dependencies import get_job_manager
 from .errors import ExtractionError, FetchError, JobNotFoundError, RobotsDeniedError, UnsafeUrlError
-from .routes import job_router, router, system_router
+from .routes import job_router, router, search_router, system_router
 
 
 @asynccontextmanager
@@ -87,3 +87,4 @@ def root() -> RedirectResponse:
 app.include_router(system_router)
 app.include_router(router)
 app.include_router(job_router)
+app.include_router(search_router)
