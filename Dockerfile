@@ -18,6 +18,8 @@ RUN python -m pip install --no-cache-dir --no-deps . \
     && mkdir -p /app/data \
     && chown -R scraper:scraper /app/data
 
+ENV DATABASE_PATH=/app/data/article_scraper.db
+
 USER scraper
 
 EXPOSE 8010
