@@ -258,6 +258,47 @@ def test_date_report_boundaries_unknown_dates_and_failures(monkeypatch, setup_hi
     assert job.items[4].date_basis == "source_date"
 
 
+def test_job_api_hides_date_mismatches_by_default(monkeypatch, setup_history):
+    history, _, manager = setup_history
+    history.service.scrape.side_effect = [
+        article("https://example.com/match", "2024-03-15"),
+        article("https://example.com/wrong-year", "2026-09-09"),
+        article("https://example.com/no-date", None),
+    ]
+    monkeypatch.setattr(
+        history_module,
+        "fetch_news_page",
+        Mock(return_value=page("match", "wrong-year", "no-date")),
+    )
+    search_id = history.create(
+        SearchRequest(query="keyword", start_date="2024-03-01", end_date="2024-03-31")
+    )
+    result = history.advance(search_id)
+    app.dependency_overrides[get_settings] = lambda: history.settings
+    app.dependency_overrides[get_scraper_service] = lambda: history.service
+    app.dependency_overrides[get_job_manager] = lambda: manager
+    try:
+        client = TestClient(app)
+        visible = client.get(result.result_url).json()
+        assert [item["url"] for item in visible["items"]] == ["https://example.com/match"]
+        assert visible["date_report"] == {
+            "in_range": 1,
+            "out_of_range": 1,
+            "unknown_date": 1,
+            "failed": 0,
+            "pending": 0,
+            "by_month": {"2024-03": 1},
+        }
+        audit = client.get(result.result_url, params={"include_excluded": True}).json()
+        assert len(audit["items"]) == 3
+        wrong = next(item for item in audit["items"] if "wrong-year" in item["url"])
+        assert wrong["included"] is False and wrong["date_status"] == "out_of_range"
+        recent = client.get("/v1/jobs").json()
+        assert len(recent[0]["items"]) == 1
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_provider_failure_keeps_checkpoint_and_no_partial_job(monkeypatch, setup_history):
     history, store, _ = setup_history
     provider = Mock(side_effect=[page("a", more=True), HTTPException(502, "Provider failed")])

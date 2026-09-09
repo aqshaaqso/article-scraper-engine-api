@@ -1,6 +1,6 @@
 # Article Scraper Engine API
 
-**Panduan handoff server:** [DEPLOY.md](DEPLOY.md). Versi engine: 0.3.0,
+**Panduan handoff server:** [DEPLOY.md](DEPLOY.md). Versi engine: 0.3.1,
 termasuk pencarian SerpAPI, scraper, Swagger UI resmi, dan Docker.
 
 Engine backend untuk mengubah URL artikel berita menjadi JSON terstruktur, baik satu per satu
@@ -155,7 +155,7 @@ di luar validasi DNS); gunakan timeout client/reverse proxy yang sesuai.
 Pencarian yang gagal tidak membuat job parsial. Jangan otomatis mengulang POST
 yang timeout: periksa daftar job terlebih dahulu agar tidak membuat job duplikat.
 
-## Pencarian historis dengan tanggal (0.3.0)
+## Pencarian historis dengan tanggal (0.3.1)
 
 Di Swagger, jalankan `POST /v1/search/jobs` dengan contoh berikut:
 
@@ -194,8 +194,8 @@ Alur pengambilan bertahap:
    Ulangi secara berurutan selama `continue_url` masih tersedia; setiap halaman dapat memakai kuota.
 4. Setelah `status=discovery_complete`, tidak ada kelanjutan hasil provider yang tersimpan.
    Tunggu juga `date_report.pending=0`: scraping job yang sudah dibuat mungkin masih berjalan.
-5. Ambil artikel melalui setiap `GET /v1/jobs/{job_id}`. Pilih `items[].included=true`
-   untuk dataset yang lolos pemeriksaan rentang tanggal.
+5. Ambil artikel melalui setiap `GET /v1/jobs/{job_id}`. Untuk job bertanggal,
+   respons standar hanya berisi artikel yang tanggal publikasinya masuk rentang.
 
 Batas 50 artikel/5 halaman berlaku **per panggilan**, bukan batas keseluruhan dua tahun.
 Sisa URL dari halaman yang belum selesai diproses disimpan, sehingga kelanjutan tidak
@@ -246,10 +246,14 @@ Saat filter, waktu dengan offset dikonversi ke zona laporan (`date_basis=report_
 Tanggal tanpa zona dibandingkan sebagai tanggal kalender sumber (`date_basis=source_date`),
 tanpa menganggap sumber pasti memakai WIB. `fetched_at` selalu waktu pengambilan aktual dalam UTC.
 
-Pada hasil job bertanggal, `date_status` membedakan `in_range`, `out_of_range`, `unknown`,
-dan `pending`. Artikel di luar rentang/tanggal tidak diketahui tetap dapat diaudit pada
-`items[].article`, tetapi `included=false`. Job tanpa filter memakai `not_filtered`
-dan `included=null`. `succeeded` tetap berarti ekstraksi berhasil, bukan lolos filter.
+Pada hasil job bertanggal, daftar `items` standar hanya menampilkan artikel dengan
+`date_status=in_range` dan `included=true`. Artikel di luar rentang, tanggal tidak diketahui,
+gagal, dan masih diproses disembunyikan dari daftar. Tambahkan query
+`?include_excluded=true` pada `GET /v1/jobs/{job_id}` atau `GET /v1/jobs` untuk audit lengkap;
+item tersebut tetap memiliki `date_status` berupa `out_of_range`, `unknown`, atau `pending`.
+Job tanpa filter tidak berubah: memakai `not_filtered`, `included=null`, dan seluruh item
+ditampilkan. `total` serta `succeeded` menghitung proses scraping, sedangkan jumlah artikel
+yang memenuhi syarat ada pada `date_report.in_range`.
 
 `date_report` tersedia per job dan secara gabungan pada progres pencarian:
 

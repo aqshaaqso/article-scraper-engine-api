@@ -1,4 +1,4 @@
-# Deploy Search + Article Scraper Engine 0.3.0
+# Deploy Search + Article Scraper Engine 0.3.1
 
 Untuk tim deployment: satu container berisi API, Swagger resmi, worker scraping,
 dan penyimpanan SQLite pada volume Docker. Tidak memerlukan dashboard atau Redis.
@@ -47,7 +47,7 @@ docker compose ps
 docker compose logs --tail=100 article-scraper
 ```
 
-Nama container: `article-scraper-engine`. Image lokal: `news-search-scraper-engine:0.3.0`.
+Nama container: `article-scraper-engine`. Image lokal: `news-search-scraper-engine:0.3.1`.
 Nama grup Compose mengikuti nama folder repository. Container harus berstatus healthy.
 Versi runtime dikunci di `requirements.lock`; base image dikunci dengan digest.
 Build pertama mengunduh dependensi; perubahan source berikutnya memakai cache lapisan
@@ -111,7 +111,7 @@ akses ke seluruh riwayat job; belum ada pemisahan tenant atau pengguna.
 
 ## 5. Update, stop, dan backup
 
-Untuk update 0.2.0 ke 0.3.0, buat backup data dengan prosedur di bawah sebelum rebuild.
+Untuk update 0.2.0 ke 0.3.1, buat backup data dengan prosedur di bawah sebelum rebuild.
 Saat startup, engine menambah kolom konteks pencarian pada tabel job; job lama tetap
 tersimpan. Tabel progres pencarian dibuat saat fitur historis pertama kali digunakan.
 Tidak ada dependency runtime tambahan dan tidak perlu mengganti `.env`.
@@ -143,11 +143,11 @@ docker compose start
 Simpan backup dan key di lokasi terbatas. Jangan mengganti nama project Compose
 tanpa memindahkan volume karena project baru akan membuat volume kosong.
 
-## Pemeriksaan fitur historis 0.3.0
+## Pemeriksaan fitur historis 0.3.1
 
 Gunakan contoh rentang tanggal dan urutan endpoint pada
 [README — Pencarian historis](README.md#pencarian-historis-dengan-tanggal-030).
-Periksa versi `/openapi.json` menunjukkan `0.3.0`, lalu pastikan Swagger menampilkan
+Periksa versi `/openapi.json` menunjukkan `0.3.1`, lalu pastikan Swagger menampilkan
 `start_date`, `end_date`, `timezone`, dan endpoint `/v1/search/runs`.
 Contoh awal memakai `max_pages=1` agar penggunaan kuota tiap panggilan terbatas.
 Lanjutkan dari `continue_url`, bukan membuat pencarian baru untuk setiap bulan.
@@ -158,7 +158,7 @@ pencarian provider dilanjutkan secara eksplisit melalui endpoint `/continue`.
 Jika request pencarian terputus akibat proses mati, kuncinya kedaluwarsa paling lama
 sekitar 10 menit sejak pembaruan terakhir. Periksa `/v1/search/runs` sebelum mengulang.
 
-Validasi perubahan 0.3.0 menggunakan provider simulasi, database sementara, serta
+Validasi perubahan 0.3.1 menggunakan provider simulasi, database sementara, serta
 pengujian API lokal. Pengambilan historis langsung memakai SerpAPI dan deployment
 server untuk versi ini belum diverifikasi.
 

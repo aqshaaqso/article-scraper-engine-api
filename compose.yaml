@@ -2,7 +2,7 @@ services:
   article-scraper:
     container_name: article-scraper-engine
     build: .
-    image: news-search-scraper-engine:0.3.0
+    image: news-search-scraper-engine:0.3.1
     init: true
     restart: unless-stopped
     stop_grace_period: 5m

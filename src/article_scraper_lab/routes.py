@@ -1,6 +1,8 @@
 """Article scraper HTTP routes."""
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Query
 
 from .dependencies import ApiKeyDep, JobManagerDep, ScraperServiceDep, SettingsDep
 from .historical_search import HistoricalSearch
@@ -53,13 +55,44 @@ def create_job(
 
 
 @job_router.get("/{job_id}", summary="Pantau progres dan hasil job")
-def get_job(job_id: str, manager: JobManagerDep, _api_key: ApiKeyDep) -> JobResponse:
-    return manager.get(job_id)
+def get_job(
+    job_id: str,
+    manager: JobManagerDep,
+    _api_key: ApiKeyDep,
+    include_excluded: Annotated[
+        bool,
+        Query(
+            description=(
+                "Khusus job dengan filter tanggal: tampilkan juga artikel di luar rentang, "
+                "tanggal tidak diketahui, gagal, dan yang masih diproses untuk audit"
+            )
+        ),
+    ] = False,
+) -> JobResponse:
+    return _filter_job_items(manager.get(job_id), include_excluded)
 
 
 @job_router.get("", summary="Lihat job terbaru")
-def recent_jobs(manager: JobManagerDep, _api_key: ApiKeyDep) -> list[JobResponse]:
-    return manager.recent()
+def recent_jobs(
+    manager: JobManagerDep,
+    _api_key: ApiKeyDep,
+    include_excluded: Annotated[
+        bool,
+        Query(
+            description=(
+                "Khusus job dengan filter tanggal: tampilkan juga item yang tidak lolos "
+                "filter untuk audit"
+            )
+        ),
+    ] = False,
+) -> list[JobResponse]:
+    return [_filter_job_items(job, include_excluded) for job in manager.recent()]
+
+
+def _filter_job_items(job: JobResponse, include_excluded: bool) -> JobResponse:
+    if include_excluded or job.date_filter is None:
+        return job
+    return job.model_copy(update={"items": [item for item in job.items if item.included is True]})
 
 
 system_router = APIRouter(tags=["System"])
@@ -75,7 +108,7 @@ search_router = APIRouter(prefix="/v1/search", tags=["Search news"])
     "Isi start_date dan end_date untuk pencarian bertahap per bulan yang bisa dilanjutkan. "
     "max_pages dan max_articles membatasi setiap panggilan, bukan seluruh periode. "
     "Ambil JSON artikel lengkap melalui result_url / GET /v1/jobs/{job_id}. "
-    "Untuk hasil dalam rentang, pilih items dengan included=true.",
+    "Secara default result_url hanya menampilkan artikel yang tanggal publikasinya masuk rentang.",
 )
 def search_news(
     body: SearchRequest,
