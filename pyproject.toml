@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "article-scraper-lab"
-version = "0.2.0"
+version = "0.3.0"
 description = "Security-conscious article scraper engine API with FastAPI and Trafilatura"
 readme = "README.md"
 requires-python = ">=3.11"

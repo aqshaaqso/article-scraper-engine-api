@@ -8,8 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from .article_dates import apply_date_filter
 from .errors import JobNotFoundError
-from .models import ArticleResponse, JobItemResponse, JobResponse
+from .models import ArticleResponse, DateFilter, JobItemResponse, JobResponse
 from .security import UrlTarget
 
 
@@ -57,22 +58,27 @@ class JobStore:
                 CREATE INDEX IF NOT EXISTS idx_job_items_job ON job_items(job_id, position);
                 """
             )
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
+            if "search_context" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN search_context TEXT")
 
-    def create(self, urls: list[str], targets: list[UrlTarget]) -> str:
+    def create(self, urls: list[str], targets: list[UrlTarget], *, context=None, db=None) -> str:
+        if db is None:
+            with self._connect() as connection:
+                return self.create(urls, targets, context=context, db=connection)
         job_id = uuid4().hex
-        with self._connect() as db:
-            db.execute(
-                "INSERT INTO jobs(id,status,total,created_at) VALUES(?,?,?,?)",
-                (job_id, "queued", len(urls), _now()),
-            )
-            db.executemany(
-                """INSERT INTO job_items(job_id,position,url,normalized_url,domain)
-                VALUES(?,?,?,?,?)""",
-                [
-                    (job_id, index, raw, target.url, target.hostname)
-                    for index, (raw, target) in enumerate(zip(urls, targets, strict=True))
-                ],
-            )
+        db.execute(
+            "INSERT INTO jobs(id,status,total,created_at,search_context) VALUES(?,?,?,?,?)",
+            (job_id, "queued", len(urls), _now(), json.dumps(context) if context else None),
+        )
+        db.executemany(
+            """INSERT INTO job_items(job_id,position,url,normalized_url,domain)
+            VALUES(?,?,?,?,?)""",
+            [
+                (job_id, index, raw, target.url, target.hostname)
+                for index, (raw, target) in enumerate(zip(urls, targets, strict=True))
+            ],
+        )
         return job_id
 
     def queued_items(self, job_id: str | None = None) -> list[sqlite3.Row]:
@@ -158,6 +164,8 @@ class JobStore:
             )
             for row in rows
         ]
+        context = json.loads(job["search_context"]) if job["search_context"] else {}
+        criteria = DateFilter.model_validate(context["date_filter"]) if context else None
         return JobResponse(
             job_id=job["id"],
             status=job["status"],
@@ -170,6 +178,9 @@ class JobStore:
             finished_at=job["finished_at"],
             duration_ms=calculate_duration_ms(job["started_at"], job["finished_at"]),
             items=items,
+            date_filter=criteria,
+            date_report=apply_date_filter(items, criteria) if criteria else None,
+            search_id=context.get("search_id"),
         )
 
     def recent(self, limit: int = 20) -> list[JobResponse]:

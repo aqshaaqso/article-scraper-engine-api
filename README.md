@@ -1,6 +1,6 @@
 # Article Scraper Engine API
 
-**Panduan handoff server:** [DEPLOY.md](DEPLOY.md). Versi engine: 0.2.0,
+**Panduan handoff server:** [DEPLOY.md](DEPLOY.md). Versi engine: 0.3.0,
 termasuk pencarian SerpAPI, scraper, Swagger UI resmi, dan Docker.
 
 Engine backend untuk mengubah URL artikel berita menjadi JSON terstruktur, baik satu per satu
@@ -154,6 +154,114 @@ Pencarian bisa menunggu hingga sekitar 225 detik untuk 5 halaman (45 detik per h
 di luar validasi DNS); gunakan timeout client/reverse proxy yang sesuai.
 Pencarian yang gagal tidak membuat job parsial. Jangan otomatis mengulang POST
 yang timeout: periksa daftar job terlebih dahulu agar tidak membuat job duplikat.
+
+## Pencarian historis dengan tanggal (0.3.0)
+
+Di Swagger, jalankan `POST /v1/search/jobs` dengan contoh berikut:
+
+```json
+{
+  "query": "anak gunung krakatau",
+  "start_date": "2024-09-09",
+  "end_date": "2026-09-09",
+  "timezone": "Asia/Jakarta",
+  "max_articles": 50,
+  "max_pages": 5
+}
+```
+
+Tanggal awal dan akhir **inklusif**, harus diisi bersama, dan memfilter **tanggal
+publikasi**, bukan tanggal perubahan atau pengambilan. Rentang dibagi per bulan
+kalender; contoh dua tahun di atas menyentuh 25 bulan (bulan pertama/terakhir parsial).
+Maksimal 120 bulan kalender per pencarian, tahun 1900–2100. Zona laporan yang tersedia:
+`UTC`, `Asia/Jakarta` (WIB), `Asia/Makassar` (WITA), `Asia/Jayapura` (WIT).
+Filter ini sampai ketelitian hari; jam publikasi disajikan pada hasil bila tersedia.
+
+Pencarian tetap memakai Google Organic Results. Filter tanggal provider memakai
+[`tbs=cdr:1,cd_min:...,cd_max:...`](https://serpapi.com/blog/filtering-google-search-and-google-news-results/).
+Untuk mengurangi kehilangan artikel di batas zona waktu, pencarian diperlebar satu hari
+di kedua sisi setiap bulan. Tanggal metadata artikel diperiksa kembali terhadap rentang
+asli setelah scraping; hasil mesin pencari bukan bukti tanggal terbit yang pasti.
+
+Alur pengambilan bertahap:
+
+1. Kirim request di atas satu kali. Simpan `search_id`, `progress_url`, `continue_url`,
+   serta `job_id`/`result_url` bila ada URL yang berhasil ditemukan.
+2. Baca `GET /v1/search/runs/{search_id}` untuk progres seluruh pencarian dan daftar
+   `job_ids`. `GET /v1/search/runs` menampilkan 20 pencarian terakhir bila respons awal terputus.
+3. Panggil `POST /v1/search/runs/{search_id}/continue` **tanpa body** untuk melanjutkan.
+   Setiap panggilan memakai batas `max_pages` dan `max_articles` dari request awal.
+   Ulangi secara berurutan selama `continue_url` masih tersedia; setiap halaman dapat memakai kuota.
+4. Setelah `status=discovery_complete`, tidak ada kelanjutan hasil provider yang tersimpan.
+   Tunggu juga `date_report.pending=0`: scraping job yang sudah dibuat mungkin masih berjalan.
+5. Ambil artikel melalui setiap `GET /v1/jobs/{job_id}`. Pilih `items[].included=true`
+   untuk dataset yang lolos pemeriksaan rentang tanggal.
+
+Batas 50 artikel/5 halaman berlaku **per panggilan**, bukan batas keseluruhan dua tahun.
+Sisa URL dari halaman yang belum selesai diproses disimpan, sehingga kelanjutan tidak
+melewati URL tersebut atau perlu mengunduh ulang halaman itu. URL yang telah masuk job
+tidak dimasukkan ulang dalam pencarian yang sama, termasuk URL yang muncul di bulan lain.
+Ini deduplikasi URL yang dinormalisasi; salinan artikel pada URL berbeda masih perlu ditinjau.
+
+Progres tersimpan di SQLite bersama job. Penyimpanan job dan kemajuan pencarian berada
+dalam satu transaksi. Jika provider gagal, panggilan tersebut tidak membuat job parsial
+dan checkpoint sebelumnya tetap bisa dilanjutkan. Error memuat `search_id` dan URL progres.
+`pages_fetched` menghitung halaman pada batch yang tersimpan; `requests_attempted` juga
+mencatat percobaan yang gagal/diulang, **bukan perhitungan tagihan atau unit provider**.
+Setelah timeout, periksa progres dahulu. Request bersamaan untuk pencarian yang sama
+mendapat 409; setelah proses mati, kunci panggilan terakhir kedaluwarsa dalam sekitar
+10 menit dari pembaruan terakhir. Perubahan allowlist membutuhkan pencarian baru.
+
+`months_completed` berarti penelusuran bulan telah selesai menurut pagination provider,
+bukan bukti bahwa semua artikel bulan itu ditemukan. Halaman berulang dihentikan dan
+dicatat di `warnings`. Hasil bergantung pada indeks pencarian, arsip yang masih tersedia,
+dan keberhasilan ekstraksi; sistem tidak menjamin kelengkapan arsip dua tahun.
+
+### Detail waktu dan laporan hasil
+
+Field lama `published_at`, `modified_at`, dan `fetched_at` tetap tersedia.
+`publication_time` serta `modification_time` menambahkan detail berikut:
+
+```json
+{
+  "raw": "2024-09-09T08:15:00+07:00",
+  "source": "json_ld.datePublished",
+  "date": "2024-09-09",
+  "local_datetime": "2024-09-09T08:15:00+07:00",
+  "utc": "2024-09-09T01:15:00Z",
+  "timezone": "+07:00",
+  "precision": "second"
+}
+```
+
+Parser menerima tanggal ISO, waktu ISO dengan/tanpa offset, dan tanggal dengan nama
+bulan Indonesia serta WIB/WITA/WIT. Metadata JSON-LD diprioritaskan, lalu meta artikel,
+itemprop, dan untuk publikasi, hasil ekstraksi Trafilatura. Nilai yang tidak dikenali
+tetap tersedia sebagai `raw` dengan `precision=unknown`; tidak diterka dari waktu scraping.
+Fallback ekstraksi juga bisa keliru, sehingga `source` disertakan untuk audit.
+
+Jika sumber hanya mencantumkan tanggal, `precision=day`, sementara jam, zona waktu,
+dan UTC tetap `null`. Jika ada jam tetapi tidak ada zona, UTC tetap `null`.
+Saat filter, waktu dengan offset dikonversi ke zona laporan (`date_basis=report_timezone`).
+Tanggal tanpa zona dibandingkan sebagai tanggal kalender sumber (`date_basis=source_date`),
+tanpa menganggap sumber pasti memakai WIB. `fetched_at` selalu waktu pengambilan aktual dalam UTC.
+
+Pada hasil job bertanggal, `date_status` membedakan `in_range`, `out_of_range`, `unknown`,
+dan `pending`. Artikel di luar rentang/tanggal tidak diketahui tetap dapat diaudit pada
+`items[].article`, tetapi `included=false`. Job tanpa filter memakai `not_filtered`
+dan `included=null`. `succeeded` tetap berarti ekstraksi berhasil, bukan lolos filter.
+
+`date_report` tersedia per job dan secara gabungan pada progres pencarian:
+
+- `in_range`: artikel yang lolos filter.
+- `out_of_range`: tanggal publikasi di luar rentang.
+- `unknown_date`: ekstraksi berhasil tetapi tanggal publikasi tidak diketahui.
+- `failed`: scraping gagal.
+- `pending`: URL masih menunggu/sedang diproses.
+- `by_month`: jumlah artikel yang lolos per bulan dalam zona laporan, termasuk nilai nol.
+
+Nilai nol saat pencarian belum selesai bukan bukti tidak ada berita pada bulan tersebut.
+Riwayat job versi lama tetap bisa dibaca; detail tambahan baru tersedia untuk scraping baru.
 
 ## Antrean dan worker
 

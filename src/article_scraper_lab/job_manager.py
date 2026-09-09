@@ -45,6 +45,18 @@ class JobManager:
     def recent(self) -> list[JobResponse]:
         return self._store.recent()
 
+    def commit_search_batch(self, urls, context, checkpoint):
+        """Persist the job and search checkpoint in one transaction before scheduling."""
+        targets = [self._service.validate_url(url) for url in urls]
+        with self._store._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            job_id = self._store.create(urls, targets, context=context, db=db) if urls else None
+            checkpoint(db, job_id)
+        if job_id:
+            for item in self._store.queued_items(job_id):
+                self._schedule(item)
+        return job_id
+
     @property
     def worker_count(self) -> int:
         return self._worker_count

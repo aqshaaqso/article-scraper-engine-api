@@ -1,6 +1,7 @@
 """Bounded SerpAPI news discovery followed by the existing scraper queue."""
 
 import json
+from datetime import date
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -19,18 +20,25 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def fetch_news_page(api_key: str, query: str, start: int) -> dict:
+def fetch_news_page(
+    api_key: str,
+    query: str,
+    start: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
     # Fixed provider host. Never follow provider-supplied pagination URLs or redirects.
-    params = urlencode(
-        {
-            "engine": "google",
-            "q": query,
-            "gl": "id",
-            "hl": "id",
-            "start": start,
-            "api_key": api_key,
-        }
-    )
+    parameters = {
+        "engine": "google",
+        "q": query,
+        "gl": "id",
+        "hl": "id",
+        "start": start,
+        "api_key": api_key,
+    }
+    if start_date is not None and end_date is not None:
+        parameters["tbs"] = f"cdr:1,cd_min:{start_date:%m/%d/%Y},cd_max:{end_date:%m/%d/%Y}"
+    params = urlencode(parameters)
     request = Request("https://serpapi.com/search.json?" + params)
     try:
         with build_opener(NoRedirect()).open(request, timeout=45) as response:
@@ -50,6 +58,10 @@ def fetch_news_page(api_key: str, query: str, start: int) -> dict:
     except (URLError, TimeoutError, OSError, ValueError):
         # Provider exception strings can contain the URL with the API key.
         raise HTTPException(502, "SerpAPI tidak dapat diakses atau respons tidak valid.") from None
+    if payload.get("error") == "Google hasn't returned any results for this query.":
+        metadata = payload.get("search_metadata", {})
+        if isinstance(metadata, dict) and metadata.get("status") == "Success":
+            return {"organic_results": []}
     if payload.get("error"):
         raise HTTPException(502, "SerpAPI mengembalikan error; periksa akun dan kuota.")
     if not isinstance(payload.get("organic_results", []), list):
@@ -67,6 +79,12 @@ def search_and_submit(
         raise HTTPException(503, "Isi SERPAPI_API_KEY di .env lalu buat ulang container.")
     if not settings.allowed_domains:
         raise HTTPException(503, "ALLOWED_DOMAINS wajib diisi untuk pencarian berita.")
+    if body.start_date is not None:
+        from .historical_search import HistoricalSearch
+
+        history = HistoricalSearch(settings, service, manager)
+        search_id = history.create(body)
+        return history.advance(search_id)
     sites = " OR ".join(f"site:{domain}" for domain in settings.allowed_domains)
     query = f"{body.query} ({sites})"
     urls: list[str] = []

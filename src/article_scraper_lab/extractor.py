@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlsplit
 import trafilatura
 from bs4 import BeautifulSoup
 
+from .article_dates import parse_article_time
 from .errors import ExtractionError
 from .models import ArticleResponse
 
@@ -56,6 +57,8 @@ class ArticleExtractor:
         publisher = structured.get("publisher")
         publisher_name = publisher.get("name") if isinstance(publisher, dict) else None
         fetched_at = datetime.now(UTC)
+        publication_time = self._article_time(soup, structured, extracted, modified=False)
+        modification_time = self._article_time(soup, structured, extracted, modified=True)
         return ArticleResponse(
             source_url=source_url,
             final_url=final_url,
@@ -63,8 +66,10 @@ class ArticleExtractor:
             domain=urlsplit(canonical).hostname or urlsplit(final_url).hostname or "",
             title=title,
             author=author,
-            published_at=self._first_text(structured.get("datePublished"), extracted.get("date")),
-            modified_at=self._first_text(structured.get("dateModified")),
+            published_at=publication_time.raw,
+            modified_at=modification_time.raw,
+            publication_time=publication_time,
+            modification_time=modification_time,
             source=self._first_text(
                 publisher_name,
                 extracted.get("sitename"),
@@ -83,6 +88,34 @@ class ArticleExtractor:
             robots_status=robots_status,
             fetched_at=fetched_at,
         )
+
+    @classmethod
+    def _article_time(cls, soup, structured, extracted, *, modified):
+        field = "dateModified" if modified else "datePublished"
+        prop = "article:modified_time" if modified else "article:published_time"
+        candidates = [
+            (structured.get(field), f"json_ld.{field}"),
+            (cls._meta(soup, "property", prop), f"meta.{prop}"),
+            (cls._meta(soup, "name", prop), f"meta.{prop}"),
+        ]
+        tag = soup.find(attrs={"itemprop": field})
+        if tag:
+            candidates.append(
+                (tag.get("content") or tag.get("datetime") or tag.get_text(), f"itemprop.{field}")
+            )
+        if not modified:
+            candidates.append((extracted.get("date"), "trafilatura.date"))
+        fallback = parse_article_time(None)
+        for raw, source in candidates:
+            raw = cls._first_text(raw)
+            if not raw:
+                continue
+            parsed = parse_article_time(raw, source)
+            if fallback.raw is None:
+                fallback = parsed
+            if parsed.date is not None:
+                return parsed
+        return fallback
 
     @staticmethod
     def _trafilatura_payload(html: str, url: str) -> dict[str, Any]:

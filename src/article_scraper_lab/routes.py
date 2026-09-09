@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from .dependencies import ApiKeyDep, JobManagerDep, ScraperServiceDep, SettingsDep
+from .historical_search import HistoricalSearch
 from .models import (
     MAX_URLS_PER_JOB,
     ApiError,
@@ -13,6 +14,7 @@ from .models import (
     JobResponse,
     ScrapeRequest,
     SearchAccepted,
+    SearchProgress,
     SearchRequest,
 )
 from .search import search_and_submit
@@ -70,7 +72,10 @@ search_router = APIRouter(prefix="/v1/search", tags=["Search news"])
     status_code=202,
     summary="Cari berita lalu scrape otomatis",
     description="Cari URL via SerpAPI, filter domain, lalu antrekan scraping. "
-    "Ambil JSON artikel lengkap melalui result_url / GET /v1/jobs/{job_id}.",
+    "Isi start_date dan end_date untuk pencarian bertahap per bulan yang bisa dilanjutkan. "
+    "max_pages dan max_articles membatasi setiap panggilan, bukan seluruh periode. "
+    "Ambil JSON artikel lengkap melalui result_url / GET /v1/jobs/{job_id}. "
+    "Untuk hasil dalam rentang, pilih items dengan included=true.",
 )
 def search_news(
     body: SearchRequest,
@@ -80,6 +85,45 @@ def search_news(
     _api_key: ApiKeyDep,
 ) -> SearchAccepted:
     return search_and_submit(body, settings, service, manager)
+
+
+@search_router.get("/runs", summary="Lihat progres pencarian historis terbaru")
+def recent_searches(
+    settings: SettingsDep,
+    service: ScraperServiceDep,
+    manager: JobManagerDep,
+    _api_key: ApiKeyDep,
+) -> list[SearchProgress]:
+    return HistoricalSearch(settings, service, manager).recent()
+
+
+@search_router.get("/runs/{search_id}", summary="Progres bulanan dan laporan tanggal artikel")
+def search_progress(
+    search_id: str,
+    settings: SettingsDep,
+    service: ScraperServiceDep,
+    manager: JobManagerDep,
+    _api_key: ApiKeyDep,
+) -> SearchProgress:
+    return HistoricalSearch(settings, service, manager).progress(search_id)
+
+
+@search_router.post(
+    "/runs/{search_id}/continue",
+    status_code=202,
+    summary="Lanjutkan pencarian dari progres tersimpan",
+    description="Tanpa request body. Menggunakan kata kunci, rentang dan batas permintaan awal. "
+    "Setiap halaman provider dapat memakai kuota. Setelah discovery_complete, "
+    "panggilan ini tidak melakukan pencarian atau membuat job baru.",
+)
+def continue_search(
+    search_id: str,
+    settings: SettingsDep,
+    service: ScraperServiceDep,
+    manager: JobManagerDep,
+    _api_key: ApiKeyDep,
+) -> SearchAccepted:
+    return HistoricalSearch(settings, service, manager).advance(search_id)
 
 
 @system_router.get("/health", summary="Periksa konfigurasi scraper")
