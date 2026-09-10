@@ -2,10 +2,10 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 
 from .dependencies import ApiKeyDep, JobManagerDep, ScraperServiceDep, SettingsDep
-from .historical_search import HistoricalSearch
 from .models import (
     MAX_URLS_PER_JOB,
     ApiError,
@@ -14,12 +14,13 @@ from .models import (
     HealthResponse,
     JobAccepted,
     JobResponse,
+    ReadinessResponse,
     ScrapeRequest,
     SearchAccepted,
     SearchProgress,
     SearchRequest,
 )
-from .search import search_and_submit
+from .postgres_gateway import SCHEMA_VERSION
 
 router = APIRouter(prefix="/v1/articles", tags=["Articles"])
 
@@ -105,7 +106,9 @@ search_router = APIRouter(prefix="/v1/search", tags=["Search news"])
     status_code=202,
     summary="Cari berita lalu scrape otomatis",
     description="Cari URL via SerpAPI, filter domain, lalu antrekan scraping. "
-    "Isi start_date dan end_date untuk pencarian bertahap per bulan yang bisa dilanjutkan. "
+    "Filter tanggal opsional: day memakai bulan berjalan, month memakai tahun berjalan, "
+    "year memakai 12 bulan penuh, dan start_date tanpa end_date berlaku sampai hari ini. "
+    "Rentang bertanggal diproses bertahap per bulan dan bisa dilanjutkan. "
     "max_pages dan max_articles membatasi setiap panggilan, bukan seluruh periode. "
     "Ambil JSON artikel lengkap melalui result_url / GET /v1/jobs/{job_id}. "
     "Secara default result_url hanya menampilkan artikel yang tanggal publikasinya masuk rentang.",
@@ -117,6 +120,10 @@ def search_news(
     manager: JobManagerDep,
     _api_key: ApiKeyDep,
 ) -> SearchAccepted:
+    if settings.database_url:
+        return manager.submit_search(body)  # type: ignore[attr-defined]
+    from .search import search_and_submit
+
     return search_and_submit(body, settings, service, manager)
 
 
@@ -127,6 +134,10 @@ def recent_searches(
     manager: JobManagerDep,
     _api_key: ApiKeyDep,
 ) -> list[SearchProgress]:
+    if settings.database_url:
+        return manager.recent_searches()  # type: ignore[attr-defined]
+    from .historical_search import HistoricalSearch
+
     return HistoricalSearch(settings, service, manager).recent()
 
 
@@ -138,6 +149,10 @@ def search_progress(
     manager: JobManagerDep,
     _api_key: ApiKeyDep,
 ) -> SearchProgress:
+    if settings.database_url:
+        return manager.search_progress(search_id)  # type: ignore[attr-defined]
+    from .historical_search import HistoricalSearch
+
     return HistoricalSearch(settings, service, manager).progress(search_id)
 
 
@@ -156,6 +171,10 @@ def continue_search(
     manager: JobManagerDep,
     _api_key: ApiKeyDep,
 ) -> SearchAccepted:
+    if settings.database_url:
+        return manager.continue_search(search_id)  # type: ignore[attr-defined]
+    from .historical_search import HistoricalSearch
+
     return HistoricalSearch(settings, service, manager).advance(search_id)
 
 
@@ -169,3 +188,21 @@ def health(settings: SettingsDep) -> HealthResponse:
         api_key_required=settings.api_key is not None,
         max_urls_per_job=MAX_URLS_PER_JOB,
     )
+
+
+@system_router.get("/ready", summary="Periksa kesiapan middleware dan database")
+def readiness(settings: SettingsDep, manager: JobManagerDep) -> ReadinessResponse:
+    if settings.database_url and not manager.health():  # type: ignore[attr-defined]
+        raise HTTPException(503, "PostgreSQL tidak tersedia")
+    return ReadinessResponse(
+        status="ready",
+        database="postgresql" if settings.database_url else "sqlite-oracle",
+        schema_version=SCHEMA_VERSION if settings.database_url else 0,
+    )
+
+
+@system_router.get("/metrics", response_class=PlainTextResponse, include_in_schema=False)
+def metrics(settings: SettingsDep, manager: JobManagerDep, _api_key: ApiKeyDep) -> str:
+    if not settings.database_url:
+        raise HTTPException(503, "Metrik production hanya tersedia pada mode PostgreSQL")
+    return manager.metrics()  # type: ignore[attr-defined]

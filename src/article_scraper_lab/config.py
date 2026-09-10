@@ -53,6 +53,8 @@ class Settings:
     database_path: Path
     api_key: str | None
     serpapi_api_key: str | None = None
+    database_url: str | None = None
+    sync_scrape_timeout_seconds: float = 30.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -86,6 +88,8 @@ class Settings:
             database_path=database_path,
             api_key=api_key,
             serpapi_api_key=os.getenv("SERPAPI_API_KEY", "").strip() or None,
+            database_url=os.getenv("DATABASE_URL", "").strip() or None,
+            sync_scrape_timeout_seconds=_positive_float("SYNC_SCRAPE_TIMEOUT_SECONDS", 30),
         )
 
 

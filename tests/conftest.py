@@ -5,6 +5,7 @@ import pytest
 from article_scraper_lab.config import get_settings
 from article_scraper_lab.dependencies import (
     get_job_manager,
+    get_postgres_gateway,
     get_rate_limiter,
     get_scraper_service,
 )
@@ -17,6 +18,7 @@ def isolated_environment(monkeypatch, tmp_path):
         "SERPAPI_API_KEY": "",
         "REQUIRE_API_KEY": "false",
         "DATABASE_PATH": str(tmp_path / "test.db"),
+        "DATABASE_URL": "",
         "ALLOWED_DOMAINS": "",
         "ALLOW_HTTP": "false",
         "RESPECT_ROBOTS": "true",
@@ -24,7 +26,13 @@ def isolated_environment(monkeypatch, tmp_path):
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
-    caches = (get_settings, get_scraper_service, get_job_manager, get_rate_limiter)
+    caches = (
+        get_settings,
+        get_scraper_service,
+        get_job_manager,
+        get_rate_limiter,
+        get_postgres_gateway,
+    )
     for factory in caches:
         factory.cache_clear()
     yield

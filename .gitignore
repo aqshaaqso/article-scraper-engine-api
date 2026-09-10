@@ -10,3 +10,5 @@ build/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+json-output-*.zip
+json-output-*/

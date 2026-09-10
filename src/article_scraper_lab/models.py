@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 from datetime import date, datetime
 from typing import Literal, Self
@@ -11,6 +12,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 MAX_URLS_PER_JOB = 100
 
 ReportTimezone = Literal["UTC", "Asia/Jakarta", "Asia/Makassar", "Asia/Jayapura"]
+
+REPORT_TIMEZONE_OFFSETS = {
+    "UTC": 0,
+    "Asia/Jakarta": 7,
+    "Asia/Makassar": 8,
+    "Asia/Jayapura": 9,
+}
+
+
+def _today_in_timezone(name: ReportTimezone) -> date:
+    zone = dt.timezone(dt.timedelta(hours=REPORT_TIMEZONE_OFFSETS[name]))
+    return datetime.now(zone).date()
 
 
 class ArticleTime(BaseModel):
@@ -91,6 +104,12 @@ class HealthResponse(BaseModel):
     max_urls_per_job: int
 
 
+class ReadinessResponse(BaseModel):
+    status: str
+    database: str
+    schema_version: int
+
+
 class ApiError(BaseModel):
     error: str
     detail: str
@@ -140,6 +159,8 @@ class JobResponse(BaseModel):
     completed: int
     succeeded: int
     failed: int
+    error_code: str | None = None
+    error_detail: str | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -161,8 +182,7 @@ class SearchRequest(BaseModel):
                 "query": "anak gunung krakatau",
                 "max_articles": 50,
                 "max_pages": 5,
-                "start_date": "2024-09-09",
-                "end_date": "2026-09-09",
+                "month": 9,
                 "timezone": "Asia/Jakarta",
             }
         },
@@ -174,22 +194,64 @@ class SearchRequest(BaseModel):
     )
     start_date: date | None = Field(default=None, description="Tanggal terbit awal, inklusif")
     end_date: date | None = Field(default=None, description="Tanggal terbit akhir, inklusif")
+    day: int | None = Field(
+        default=None,
+        ge=1,
+        le=31,
+        description="Satu tanggal pada bulan dan tahun berjalan",
+    )
+    month: int | None = Field(
+        default=None,
+        ge=1,
+        le=12,
+        description="Satu bulan penuh pada tahun berjalan",
+    )
+    year: int | None = Field(
+        default=None,
+        ge=1900,
+        le=2100,
+        description="Satu tahun penuh (12 bulan)",
+    )
     timezone: ReportTimezone = Field(
         default="Asia/Jakarta", description="Zona waktu untuk memeriksa tanggal publikasi"
     )
 
     @model_validator(mode="after")
     def validate_dates(self) -> Self:
-        if (self.start_date is None) != (self.end_date is None):
-            raise ValueError("start_date dan end_date harus diisi bersama")
-        if self.start_date is not None:
-            DateFilter(start_date=self.start_date, end_date=self.end_date, timezone=self.timezone)
-            months = (
-                (self.end_date.year - self.start_date.year) * 12
-                + self.end_date.month
-                - self.start_date.month
-                + 1
+        selectors = [self.day is not None, self.month is not None, self.year is not None]
+        if sum(selectors) > 1:
+            raise ValueError("day, month, dan year tidak boleh digabungkan")
+        if any(selectors) and (self.start_date is not None or self.end_date is not None):
+            raise ValueError(
+                "Filter day/month/year tidak boleh digabung dengan start_date/end_date"
             )
+
+        today = _today_in_timezone(self.timezone)
+        start, end = self.start_date, self.end_date
+        if self.day is not None:
+            last_day = calendar.monthrange(today.year, today.month)[1]
+            if self.day > last_day:
+                raise ValueError("day tidak tersedia pada bulan berjalan")
+            start = end = date(today.year, today.month, self.day)
+        elif self.month is not None:
+            start = date(today.year, self.month, 1)
+            end = date(today.year, self.month, calendar.monthrange(today.year, self.month)[1])
+        elif self.year is not None:
+            start, end = date(self.year, 1, 1), date(self.year, 12, 31)
+        elif start is not None and end is None:
+            end = today
+        elif start is None and end is not None:
+            raise ValueError("end_date membutuhkan start_date")
+
+        if start is not None and end is not None:
+            DateFilter(start_date=start, end_date=end, timezone=self.timezone)
+            object.__setattr__(self, "start_date", start)
+            object.__setattr__(self, "end_date", end)
+            # Persist a canonical range so Go continuations never depend on a later current date.
+            object.__setattr__(self, "day", None)
+            object.__setattr__(self, "month", None)
+            object.__setattr__(self, "year", None)
+            months = (end.year - start.year) * 12 + end.month - start.month + 1
             if months > 120:
                 raise ValueError("Maksimal 120 bulan kalender per pencarian")
         return self

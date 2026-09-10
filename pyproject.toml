@@ -5,20 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "article-scraper-lab"
 version = "0.3.1"
-description = "Security-conscious article scraper engine API with FastAPI and Trafilatura"
+description = "FastAPI middleware for the PostgreSQL-backed Go article scraper"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "beautifulsoup4>=4.12,<5.0",
     "fastapi>=0.116,<1.0",
-    "httpx2>=2.12,<3.0",
-    "lxml-html-clean>=0.4,<1.0",
     "python-dotenv>=1.0,<2.0",
-    "trafilatura>=2.2,<3.0",
+    "psycopg[binary]>=3.2,<4.0",
     "uvicorn>=0.35,<1.0",
 ]
 
 [project.optional-dependencies]
+oracle = [
+    "beautifulsoup4>=4.12,<5.0",
+    "httpx2>=2.12,<3.0",
+    "lxml-html-clean>=0.4,<1.0",
+    "trafilatura>=2.2,<3.0",
+]
 dev = [
     "pytest>=8.3,<9.0",
     "ruff>=0.12,<1.0",

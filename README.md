@@ -1,5 +1,11 @@
 # Article Scraper Engine API
 
+> **Hybrid Go migration:** the production-oriented path now keeps FastAPI as
+> middleware and runs scraping, extraction, SerpAPI, and historical discovery
+> in a Go worker through PostgreSQL. See [HYBRID_ARCHITECTURE.md](HYBRID_ARCHITECTURE.md).
+> The original Python/SQLite engine remains available as the v0.3.1 oracle
+> while parity validation is completed.
+
 **Panduan handoff server:** [DEPLOY.md](DEPLOY.md). Versi engine: 0.3.1,
 termasuk pencarian SerpAPI, scraper, Swagger UI resmi, dan Docker.
 
@@ -25,7 +31,7 @@ Buka PowerShell, lalu jalankan satu per satu:
 ```powershell
 cd C:\workstuff\medsos\article-scraper-lab
 py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,oracle]"
 Copy-Item .env.example .env
 ```
 
@@ -170,8 +176,13 @@ Di Swagger, jalankan `POST /v1/search/jobs` dengan contoh berikut:
 }
 ```
 
-Tanggal awal dan akhir **inklusif**, harus diisi bersama, dan memfilter **tanggal
-publikasi**, bukan tanggal perubahan atau pengambilan. Rentang dibagi per bulan
+Tanggal awal dan akhir **inklusif** dan memfilter **tanggal publikasi**, bukan
+tanggal perubahan atau pengambilan. `start_date` boleh dikirim tanpa `end_date`;
+akhir rentangnya otomatis menjadi hari ini menurut `timezone`. Alternatif ringkas:
+`day` mencari satu tanggal pada bulan berjalan, `month` mencari satu bulan penuh
+pada tahun berjalan, dan `year` mencari 12 bulan penuh. Filter ringkas tersebut
+tidak boleh digabung satu sama lain atau dengan `start_date`/`end_date`. Tanpa
+filter tanggal, pencarian umum tetap berlaku. Rentang bertanggal dibagi per bulan
 kalender; contoh dua tahun di atas menyentuh 25 bulan (bulan pertama/terakhir parsial).
 Maksimal 120 bulan kalender per pencarian, tahun 1900–2100. Zona laporan yang tersedia:
 `UTC`, `Asia/Jakarta` (WIB), `Asia/Makassar` (WITA), `Asia/Jayapura` (WIT).

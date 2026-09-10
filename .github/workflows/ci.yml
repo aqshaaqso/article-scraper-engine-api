@@ -22,17 +22,17 @@ jobs:
         run: python -m pytest -q
 
   docker-build:
-    needs: test
+    needs: [test, go-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build image
-        run: docker build --tag article-scraper-engine-api:${{ github.sha }} .
+      - name: Build middleware image
+        run: docker build -f Dockerfile.middleware --tag article-scraper-middleware:${{ github.sha }} .
+      - name: Build worker image
+        run: docker build -f Dockerfile.worker --tag article-scraper-worker:${{ github.sha }} .
       - name: Smoke test container
         run: |
-          docker run -d --name smoke -p 127.0.0.1:8010:8010 \
-            -e REQUIRE_API_KEY=true -e SCRAPER_API_KEY=ci-test-key \
-            article-scraper-engine-api:${{ github.sha }}
+          SCRAPER_API_KEY=ci-test-key docker compose up -d --wait --wait-timeout 180
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8010/health; then break; fi
             sleep 2
@@ -42,7 +42,24 @@ jobs:
           curl -fsS http://127.0.0.1:8010/openapi.json | python -c 'import json,sys; d=json.load(sys.stdin); assert "/v1/search/jobs" in d["paths"]'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8010/v1/jobs)" = 401
           curl -fsS -H 'X-API-Key: ci-test-key' http://127.0.0.1:8010/v1/jobs
-          docker exec smoke python -m pip check
+          curl -fsS http://127.0.0.1:8010/ready
+          SCRAPER_API_KEY=ci-test-key python scripts/hybrid_smoke.py --include-search-failure
       - name: Container logs
         if: always()
-        run: docker logs smoke || true
+        run: docker compose logs || true
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v
+
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.6"
+          cache: true
+      - name: Test with race detector
+        run: go test -race ./...
+      - name: Vet
+        run: go vet ./...

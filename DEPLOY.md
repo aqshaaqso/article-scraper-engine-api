@@ -1,5 +1,10 @@
 # Deploy Search + Article Scraper Engine 0.3.1
 
+> Dokumen di bawah menjelaskan deployment Python/SQLite v0.3.1 yang lama.
+> Deployment hybrid FastAPI + Go + PostgreSQL sedang menjadi jalur pengganti;
+> gunakan [HYBRID_ARCHITECTURE.md](HYBRID_ARCHITECTURE.md) untuk stack baru.
+> Jangan memakai instruksi SQLite lama untuk stack hybrid.
+
 Untuk tim deployment: satu container berisi API, Swagger resmi, worker scraping,
 dan penyimpanan SQLite pada volume Docker. Tidak memerlukan dashboard atau Redis.
 

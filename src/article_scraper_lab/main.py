@@ -1,6 +1,7 @@
 """FastAPI application entrypoint."""
 
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -9,6 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from . import __version__
 from .dependencies import get_job_manager
 from .errors import ExtractionError, FetchError, JobNotFoundError, RobotsDeniedError, UnsafeUrlError
+from .request_context import request_id_var
 from .routes import job_router, router, search_router, system_router
 
 
@@ -33,6 +35,18 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def request_id_header(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", "").strip()[:128] or uuid4().hex
+    token = request_id_var.set(request_id)
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+    finally:
+        request_id_var.reset(token)
 
 
 @app.get("/docs", include_in_schema=False)
