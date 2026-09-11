@@ -1,20 +1,15 @@
+param(
+    [ValidateRange(1, 65535)]
+    [int]$ApiPort = 8010
+)
+
 $ErrorActionPreference = "Stop"
+$env:API_PORT = $ApiPort.ToString()
 
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$PythonPath = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+Write-Host "Starting FastAPI middleware, Go worker, and PostgreSQL on port $ApiPort..." -ForegroundColor Green
+docker compose up -d --build --wait --wait-timeout 180
+docker compose ps
 
-if (-not (Test-Path -LiteralPath $PythonPath)) {
-    throw "Virtual environment belum tersedia. Ikuti langkah setup pada README.md."
-}
-
-Write-Host ""
-Write-Host "Article Scraper Engine API" -ForegroundColor Green
-Write-Host "Swagger UI  : http://127.0.0.1:8010/swagger/index.html"
-Write-Host "OpenAPI JSON: http://127.0.0.1:8010/openapi.json"
-Write-Host "ReDoc       : http://127.0.0.1:8010/redoc"
-Write-Host "Health      : http://127.0.0.1:8010/health"
-Write-Host ""
-Write-Host "Tekan Ctrl+C untuk menghentikan backend." -ForegroundColor Yellow
-Write-Host ""
-
-& $PythonPath -m uvicorn article_scraper_lab.main:app --host 127.0.0.1 --port 8010
+Write-Host "Swagger UI: http://127.0.0.1:$ApiPort/swagger/index.html" -ForegroundColor Green
+Write-Host "Health    : http://127.0.0.1:$ApiPort/health"
+Write-Host "Readiness : http://127.0.0.1:$ApiPort/ready"

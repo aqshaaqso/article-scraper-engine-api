@@ -13,8 +13,8 @@ def test_readiness_is_additive_to_v031_contract() -> None:
     client = TestClient(app)
     assert client.get("/ready").json() == {
         "status": "ready",
-        "database": "sqlite-oracle",
-        "schema_version": 0,
+        "database": "postgresql",
+        "schema_version": 4,
     }
     paths = app.openapi()["paths"]
     expected = {
@@ -28,3 +28,7 @@ def test_readiness_is_additive_to_v031_contract() -> None:
         "/v1/search/runs/{search_id}/continue",
     }
     assert expected <= paths.keys()
+    schemas = app.openapi()["components"]["schemas"]
+    assert "requested_date_filter" in schemas["SearchAccepted"]["properties"]
+    assert "date_filter" in schemas["SearchAccepted"]["properties"]
+    assert "failed" in schemas["SearchProgress"]["properties"]["status"]["enum"]

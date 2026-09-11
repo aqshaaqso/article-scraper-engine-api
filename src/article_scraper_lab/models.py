@@ -7,7 +7,15 @@ import datetime as dt
 from datetime import date, datetime
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 MAX_URLS_PER_JOB = 100
 
@@ -48,6 +56,30 @@ class DateFilter(BaseModel):
         if self.start_date.year < 1900 or self.end_date.year > 2100:
             raise ValueError("Tahun harus antara 1900 dan 2100")
         return self
+
+
+class RequestedDateFilter(BaseModel):
+    mode: Literal["day", "month", "year", "start_date", "range", "legacy_range"]
+    day: int | None = None
+    month: int | None = None
+    year: int | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+def requested_date_filter_from_storage(
+    payload: dict[str, object], criteria: DateFilter | None
+) -> RequestedDateFilter | None:
+    stored = payload.get("requested_date_filter")
+    if stored is not None:
+        return RequestedDateFilter.model_validate(stored)
+    if criteria is None:
+        return None
+    return RequestedDateFilter(
+        mode="legacy_range",
+        start_date=criteria.start_date,
+        end_date=criteria.end_date,
+    )
 
 
 class DateReport(BaseModel):
@@ -169,12 +201,15 @@ class JobResponse(BaseModel):
         description="Durasi sejak worker pertama mulai sampai job selesai atau saat ini",
     )
     items: list[JobItemResponse] = Field(default_factory=list)
+    requested_date_filter: RequestedDateFilter | None = None
     date_filter: DateFilter | None = None
     date_report: DateReport | None = None
     search_id: str | None = None
 
 
 class SearchRequest(BaseModel):
+    _requested_date_filter: RequestedDateFilter | None = PrivateAttr(default=None)
+
     model_config = ConfigDict(
         str_strip_whitespace=True,
         json_schema_extra={
@@ -217,7 +252,7 @@ class SearchRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_dates(self) -> Self:
+    def validate_dates(self, info: ValidationInfo) -> Self:
         selectors = [self.day is not None, self.month is not None, self.year is not None]
         if sum(selectors) > 1:
             raise ValueError("day, month, dan year tidak boleh digabungkan")
@@ -226,22 +261,52 @@ class SearchRequest(BaseModel):
                 "Filter day/month/year tidak boleh digabung dengan start_date/end_date"
             )
 
+        if self.day is not None:
+            requested = RequestedDateFilter(mode="day", day=self.day)
+        elif self.month is not None:
+            requested = RequestedDateFilter(mode="month", month=self.month)
+        elif self.year is not None:
+            requested = RequestedDateFilter(mode="year", year=self.year)
+        elif self.start_date is not None and self.end_date is not None:
+            requested = RequestedDateFilter(
+                mode="range", start_date=self.start_date, end_date=self.end_date
+            )
+        elif self.start_date is not None:
+            requested = RequestedDateFilter(mode="start_date", start_date=self.start_date)
+        else:
+            requested = None
+
         today = _today_in_timezone(self.timezone)
+        from_storage = bool(info.context and info.context.get("from_storage"))
         start, end = self.start_date, self.end_date
         if self.day is not None:
             last_day = calendar.monthrange(today.year, today.month)[1]
             if self.day > last_day:
                 raise ValueError("day tidak tersedia pada bulan berjalan")
             start = end = date(today.year, today.month, self.day)
+            if not from_storage and start > today:
+                raise ValueError("day tidak boleh berada setelah hari ini")
         elif self.month is not None:
+            if not from_storage and self.month > today.month:
+                raise ValueError("month tidak boleh berada setelah bulan berjalan")
             start = date(today.year, self.month, 1)
             end = date(today.year, self.month, calendar.monthrange(today.year, self.month)[1])
+            if not from_storage and self.month == today.month:
+                end = today
         elif self.year is not None:
-            start, end = date(self.year, 1, 1), date(self.year, 12, 31)
+            if not from_storage and self.year > today.year:
+                raise ValueError("year tidak boleh berada setelah tahun berjalan")
+            start = date(self.year, 1, 1)
+            end = today if not from_storage and self.year == today.year else date(self.year, 12, 31)
         elif start is not None and end is None:
+            if not from_storage and start > today:
+                raise ValueError("start_date tidak boleh berada setelah hari ini")
             end = today
         elif start is None and end is not None:
             raise ValueError("end_date membutuhkan start_date")
+
+        if not from_storage and end is not None and end > today:
+            raise ValueError("end_date tidak boleh berada setelah hari ini")
 
         if start is not None and end is not None:
             DateFilter(start_date=start, end_date=end, timezone=self.timezone)
@@ -254,7 +319,20 @@ class SearchRequest(BaseModel):
             months = (end.year - start.year) * 12 + end.month - start.month + 1
             if months > 120:
                 raise ValueError("Maksimal 120 bulan kalender per pencarian")
+        self._requested_date_filter = requested
         return self
+
+    @property
+    def requested_date_filter(self) -> RequestedDateFilter | None:
+        return self._requested_date_filter
+
+    @property
+    def includes_future_date(self) -> bool:
+        today = _today_in_timezone(self.timezone)
+        return bool(
+            (self.start_date is not None and self.start_date > today)
+            or (self.end_date is not None and self.end_date > today)
+        )
 
 
 class SearchAccepted(BaseModel):
@@ -269,13 +347,16 @@ class SearchAccepted(BaseModel):
     search_id: str | None = None
     continue_url: str | None = None
     progress_url: str | None = None
+    requested_date_filter: RequestedDateFilter | None = None
+    date_filter: DateFilter | None = None
 
 
 class SearchProgress(BaseModel):
     search_id: str
     query: str
     date_filter: DateFilter
-    status: Literal["ready", "running", "discovery_complete"]
+    requested_date_filter: RequestedDateFilter
+    status: Literal["ready", "running", "discovery_complete", "failed"]
     months_total: int
     months_completed: int
     current_start_date: date | None

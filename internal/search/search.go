@@ -22,18 +22,19 @@ import (
 )
 
 type Request struct {
-	Query       string  `json:"query"`
-	MaxArticles int     `json:"max_articles"`
-	MaxPages    int     `json:"max_pages"`
-	StartDate   *string `json:"start_date"`
-	EndDate     *string `json:"end_date"`
-	Day         *int    `json:"day"`
-	Month       *int    `json:"month"`
-	Year        *int    `json:"year"`
-	Timezone    string  `json:"timezone"`
-	SearchID    string  `json:"search_id"`
-	JobID       string  `json:"job_id"`
-	CommandID   string  `json:"command_id"`
+	Query               string         `json:"query"`
+	MaxArticles         int            `json:"max_articles"`
+	MaxPages            int            `json:"max_pages"`
+	StartDate           *string        `json:"start_date"`
+	EndDate             *string        `json:"end_date"`
+	Day                 *int           `json:"day"`
+	Month               *int           `json:"month"`
+	Year                *int           `json:"year"`
+	Timezone            string         `json:"timezone"`
+	RequestedDateFilter map[string]any `json:"requested_date_filter,omitempty"`
+	SearchID            string         `json:"search_id"`
+	JobID               string         `json:"job_id"`
+	CommandID           string         `json:"command_id"`
 }
 type State struct {
 	Month        int      `json:"month"`
@@ -122,6 +123,7 @@ func normalizeDateRange(req *Request, now time.Time) error {
 		return err
 	}
 	today := now.In(location)
+	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 	selectors := 0
 	if req.Day != nil {
 		selectors++
@@ -145,28 +147,43 @@ func normalizeDateRange(req *Request, now time.Time) error {
 		if *req.Day < 1 || *req.Day > daysInMonth(today.Year(), today.Month()) {
 			return fmt.Errorf("day tidak tersedia pada bulan berjalan")
 		}
-		start = time.Date(today.Year(), today.Month(), *req.Day, 0, 0, 0, 0, location)
+		start = time.Date(today.Year(), today.Month(), *req.Day, 0, 0, 0, 0, time.UTC)
 		end = start
+		if start.After(todayDate) {
+			return fmt.Errorf("day tidak boleh berada setelah hari ini")
+		}
 	case req.Month != nil:
 		if *req.Month < 1 || *req.Month > 12 {
 			return fmt.Errorf("month harus antara 1 dan 12")
 		}
+		if *req.Month > int(today.Month()) {
+			return fmt.Errorf("month tidak boleh berada setelah bulan berjalan")
+		}
 		month := time.Month(*req.Month)
-		start = time.Date(today.Year(), month, 1, 0, 0, 0, 0, location)
-		end = time.Date(today.Year(), month, daysInMonth(today.Year(), month), 0, 0, 0, 0, location)
+		start = time.Date(today.Year(), month, 1, 0, 0, 0, 0, time.UTC)
+		end = time.Date(today.Year(), month, daysInMonth(today.Year(), month), 0, 0, 0, 0, time.UTC)
+		if month == today.Month() {
+			end = todayDate
+		}
 	case req.Year != nil:
 		if *req.Year < 1900 || *req.Year > 2100 {
 			return fmt.Errorf("year harus antara 1900 dan 2100")
 		}
-		start = time.Date(*req.Year, time.January, 1, 0, 0, 0, 0, location)
-		end = time.Date(*req.Year, time.December, 31, 0, 0, 0, 0, location)
+		if *req.Year > today.Year() {
+			return fmt.Errorf("year tidak boleh berada setelah tahun berjalan")
+		}
+		start = time.Date(*req.Year, time.January, 1, 0, 0, 0, 0, time.UTC)
+		end = time.Date(*req.Year, time.December, 31, 0, 0, 0, 0, time.UTC)
+		if *req.Year == today.Year() {
+			end = todayDate
+		}
 	case req.StartDate != nil && req.EndDate == nil:
 		parsed, parseErr := time.Parse("2006-01-02", *req.StartDate)
 		if parseErr != nil {
 			return fmt.Errorf("start_date tidak valid")
 		}
 		start = parsed
-		end = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+		end = todayDate
 	case req.StartDate == nil && req.EndDate != nil:
 		return fmt.Errorf("end_date membutuhkan start_date")
 	case req.StartDate == nil:
@@ -181,6 +198,9 @@ func normalizeDateRange(req *Request, now time.Time) error {
 	}
 	if start.After(end) {
 		return fmt.Errorf("start_date tidak boleh melewati end_date")
+	}
+	if end.After(todayDate) {
+		return fmt.Errorf("end_date tidak boleh berada setelah hari ini")
 	}
 	months := (end.Year()-start.Year())*12 + int(end.Month()-start.Month()) + 1
 	if months > 120 {
@@ -340,6 +360,12 @@ func (s Service) advance(ctx context.Context, searchID, commandID string) (Resul
 	if status == "discovery_complete" {
 		return Result{Status: status, SearchID: &searchID, URLs: []string{}}, nil
 	}
+	if status == "failed" {
+		return Result{}, bad("pencarian gagal dan tidak dapat dilanjutkan")
+	}
+	if err = normalizeDateRange(&req, time.Now()); err != nil {
+		return Result{}, bad(err.Error())
+	}
 	windows, err := monthWindows(*req.StartDate, *req.EndDate)
 	if err != nil {
 		return Result{}, bad("rentang tanggal tidak valid")
@@ -403,7 +429,13 @@ func (s Service) advance(ctx context.Context, searchID, commandID string) (Resul
 		id := strings.ReplaceAll(uuid.NewString(), "-", "")
 		jobID = &id
 		state.JobIDs = append(state.JobIDs, id)
-		contextJSON := map[string]any{"search_id": searchID, "date_filter": map[string]any{"start_date": *req.StartDate, "end_date": *req.EndDate, "timezone": req.Timezone}}
+		contextJSON := map[string]any{
+			"search_id":   searchID,
+			"date_filter": map[string]any{"start_date": *req.StartDate, "end_date": *req.EndDate, "timezone": req.Timezone},
+		}
+		if req.RequestedDateFilter != nil {
+			contextJSON["requested_date_filter"] = req.RequestedDateFilter
+		}
 		if _, err = tx.Exec(ctx, "INSERT INTO jobs(id,command_id,search_id,total,search_context) VALUES($1::uuid,NULLIF($2,'')::uuid,$3::uuid,$4,$5)", id, commandID, searchID, len(collected), contextJSON); err != nil {
 			return Result{}, err
 		}

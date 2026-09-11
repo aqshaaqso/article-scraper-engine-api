@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import time
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from uuid import uuid4
 
 import psycopg
 from fastapi import HTTPException
 from psycopg.rows import dict_row
 
-from .article_dates import apply_date_filter
 from .errors import ExtractionError, FetchError, JobNotFoundError, RobotsDeniedError, UnsafeUrlError
 from .models import (
+    REPORT_TIMEZONE_OFFSETS,
     ArticleResponse,
     DateFilter,
     DateReport,
@@ -24,10 +25,42 @@ from .models import (
     SearchAccepted,
     SearchProgress,
     SearchRequest,
+    requested_date_filter_from_storage,
 )
 from .request_context import request_id_var
 
 SCHEMA_VERSION = 4
+
+
+def _stored_date_report(items: list[JobItemResponse], criteria: DateFilter) -> DateReport:
+    cursor = criteria.start_date.replace(day=1)
+    by_month: dict[str, int] = {}
+    while cursor <= criteria.end_date:
+        by_month[cursor.strftime("%Y-%m")] = 0
+        cursor = date(cursor.year + (cursor.month == 12), cursor.month % 12 + 1, 1)
+    report = DateReport(by_month=by_month)
+    report_zone = timezone(timedelta(hours=REPORT_TIMEZONE_OFFSETS[criteria.timezone]))
+    for item in items:
+        if item.status in {"queued", "running"}:
+            report.pending += 1
+        elif item.status == "failed":
+            report.failed += 1
+        elif item.date_status == "in_range":
+            report.in_range += 1
+            if item.article is None:
+                continue
+            stamp = item.article.publication_time
+            published = stamp.date
+            if item.date_basis == "report_timezone" and stamp.utc is not None:
+                published = stamp.utc.astimezone(report_zone).date()
+            if published is not None:
+                key = published.strftime("%Y-%m")
+                report.by_month[key] = report.by_month.get(key, 0) + 1
+        elif item.date_status == "out_of_range":
+            report.out_of_range += 1
+        elif item.date_status == "unknown":
+            report.unknown_date += 1
+    return report
 
 
 class PostgresGateway:
@@ -95,15 +128,15 @@ class PostgresGateway:
             ).fetchone()
         lines = [
             "# TYPE article_scraper_command_queue_depth gauge",
-            f'article_scraper_command_queue_depth {summary["queue_depth"]}',
+            f"article_scraper_command_queue_depth {summary['queue_depth']}",
             "# TYPE article_scraper_oldest_command_seconds gauge",
-            f'article_scraper_oldest_command_seconds {float(summary["oldest_seconds"]):.3f}',
-            f'article_scraper_active_workers {workers["active"]}',
-            f'article_scraper_expired_leases {summary["expired"] + items["expired"]}',
+            f"article_scraper_oldest_command_seconds {float(summary['oldest_seconds']):.3f}",
+            f"article_scraper_active_workers {workers['active']}",
+            f"article_scraper_expired_leases {summary['expired'] + items['expired']}",
             f'article_scraper_items_total{{status="success"}} {items["succeeded"]}',
             f'article_scraper_items_total{{status="failed"}} {items["failed"]}',
-            f'article_scraper_search_requests_total {searches["requests"]}',
-            f'article_scraper_search_failures_total {searches["failed"]}',
+            f"article_scraper_search_requests_total {searches['requests']}",
+            f"article_scraper_search_failures_total {searches['failed']}",
         ]
         lines.extend(
             f'article_scraper_errors_total{{code="{row["error_code"]}"}} {row["total"]}'
@@ -190,7 +223,8 @@ class PostgresGateway:
             if context.get("date_filter")
             else None
         )
-        report = apply_date_filter(items, criteria) if criteria else None
+        requested = requested_date_filter_from_storage(context, criteria)
+        report = _stored_date_report(items, criteria) if criteria else None
         return JobResponse(
             job_id=self._public_id(job["id"]),
             status=job["status"],
@@ -205,6 +239,7 @@ class PostgresGateway:
             finished_at=job["finished_at"],
             duration_ms=self._duration(job["started_at"], job["finished_at"]),
             items=items,
+            requested_date_filter=requested,
             date_filter=criteria,
             date_report=report,
             search_id=self._public_id(job["search_id"]) if job["search_id"] else None,
@@ -221,6 +256,16 @@ class PostgresGateway:
     def submit_search(self, body: SearchRequest) -> SearchAccepted:
         search_id, command_id = uuid4(), uuid4()
         payload = body.model_dump(mode="json")
+        requested = body.requested_date_filter
+        criteria = (
+            DateFilter(
+                start_date=body.start_date,
+                end_date=body.end_date,
+                timezone=body.timezone,
+            )
+            if body.start_date is not None and body.end_date is not None
+            else None
+        )
         payload["command_id"] = command_id.hex
         if body.start_date is None:
             job_id = uuid4()
@@ -244,8 +289,13 @@ class PostgresGateway:
                 skipped=0,
                 urls=[],
                 result_url=f"/v1/jobs/{job_id.hex}",
+                requested_date_filter=None,
+                date_filter=None,
             )
         payload["search_id"] = search_id.hex
+        stored_request = body.model_dump(mode="json")
+        if requested is not None:
+            stored_request["requested_date_filter"] = requested.model_dump(mode="json")
         state = {
             "month": 0,
             "offset": 0,
@@ -266,7 +316,7 @@ class PostgresGateway:
             db.execute(
                 """INSERT INTO search_runs(id,request_json,state_json,status)
                 VALUES(%s,%s,%s,'ready')""",
-                (search_id, json.dumps(body.model_dump(mode="json")), json.dumps(state)),
+                (search_id, json.dumps(stored_request), json.dumps(state)),
             )
         return SearchAccepted(
             query=body.query,
@@ -278,6 +328,8 @@ class PostgresGateway:
             search_id=search_id.hex,
             progress_url=f"/v1/search/runs/{search_id.hex}",
             continue_url=f"/v1/search/runs/{search_id.hex}/continue",
+            requested_date_filter=requested,
+            date_filter=criteria,
         )
 
     def continue_search(self, search_id: str) -> SearchAccepted:
@@ -287,7 +339,17 @@ class PostgresGateway:
             ).fetchone()
             if run is None:
                 raise JobNotFoundError("Pencarian tidak ditemukan")
-            body = SearchRequest.model_validate(run["request_json"])
+            body = SearchRequest.model_validate(run["request_json"], context={"from_storage": True})
+            criteria = DateFilter(
+                start_date=body.start_date,
+                end_date=body.end_date,
+                timezone=body.timezone,
+            )
+            requested = requested_date_filter_from_storage(run["request_json"], criteria)
+            if run["status"] == "failed":
+                raise HTTPException(409, "Pencarian gagal dan tidak dapat dilanjutkan")
+            if body.includes_future_date:
+                raise HTTPException(409, "Pencarian lama memiliki rentang masa depan")
             if run["status"] == "discovery_complete":
                 return SearchAccepted(
                     query=body.query,
@@ -298,6 +360,8 @@ class PostgresGateway:
                     urls=[],
                     search_id=search_id,
                     progress_url=f"/v1/search/runs/{search_id}",
+                    requested_date_filter=requested,
+                    date_filter=criteria,
                 )
             existing = db.execute(
                 """SELECT 1 FROM commands WHERE type='search_continue'
@@ -329,6 +393,8 @@ class PostgresGateway:
             search_id=search_id,
             progress_url=f"/v1/search/runs/{search_id}",
             continue_url=f"/v1/search/runs/{search_id}/continue",
+            requested_date_filter=requested,
+            date_filter=criteria,
         )
 
     def search_progress(self, search_id: str) -> SearchProgress:
@@ -336,17 +402,12 @@ class PostgresGateway:
             row = db.execute("SELECT * FROM search_runs WHERE id=%s", (search_id,)).fetchone()
             if row is None:
                 raise JobNotFoundError("Pencarian tidak ditemukan")
-        body = SearchRequest.model_validate(row["request_json"])
+        body = SearchRequest.model_validate(row["request_json"], context={"from_storage": True})
         state = row["state_json"]
         start, end = body.start_date, body.end_date
         if start is None or end is None:
             raise JobNotFoundError("Pencarian ini tidak memiliki progres historis")
         months_total = (end.year - start.year) * 12 + end.month - start.month + 1
-        current = None
-        if state["month"] < months_total:
-            year = start.year + (start.month - 1 + state["month"]) // 12
-            month = (start.month - 1 + state["month"]) % 12 + 1
-            current = start.replace(year=year, month=month, day=1)
         report = DateReport()
         for job_id in state.get("job_ids", []):
             job_report = self.get(job_id).date_report
@@ -355,16 +416,39 @@ class PostgresGateway:
                     setattr(report, name, getattr(report, name) + getattr(job_report, name))
                 for month, count in job_report.by_month.items():
                     report.by_month[month] = report.by_month.get(month, 0) + count
-        complete = row["status"] == "discovery_complete"
+        criteria = DateFilter(start_date=start, end_date=end, timezone=body.timezone)
+        requested = requested_date_filter_from_storage(row["request_json"], criteria)
+        if requested is None:
+            raise JobNotFoundError("Metadata tanggal pencarian tidak tersedia")
+        terminal = row["status"] in {"discovery_complete", "failed"}
+        completed_months = state["month"] - int(
+            bool(state.get("pending")) and state.get("offset", 0) == 0
+        )
+        completed_months = max(0, min(completed_months, months_total))
+        current_start: date | None = None
+        current_end: date | None = None
+        if not terminal:
+            index = min(completed_months, months_total - 1)
+            current_year = start.year + (start.month - 1 + index) // 12
+            current_month = (start.month - 1 + index) % 12 + 1
+            month_start = date(current_year, current_month, 1)
+            month_end = date(
+                current_year,
+                current_month,
+                calendar.monthrange(current_year, current_month)[1],
+            )
+            current_start = max(start, month_start)
+            current_end = min(end, month_end)
         return SearchProgress(
             search_id=self._public_id(row["id"]),
             query=body.query,
-            date_filter=DateFilter(start_date=start, end_date=end, timezone=body.timezone),
+            date_filter=criteria,
+            requested_date_filter=requested,
             status=row["status"],
             months_total=months_total,
-            months_completed=min(state["month"], months_total),
-            current_start_date=current,
-            current_end_date=None,
+            months_completed=completed_months,
+            current_start_date=current_start,
+            current_end_date=current_end,
             pages_fetched=state.get("pages", 0),
             requests_attempted=row["requests_attempted"],
             discovered=len(state.get("seen", [])),
@@ -373,7 +457,7 @@ class PostgresGateway:
             date_report=report,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            continue_url=None if complete else f"/v1/search/runs/{search_id}/continue",
+            continue_url=None if terminal else f"/v1/search/runs/{search_id}/continue",
             warnings=state.get("warnings", []),
         )
 

@@ -32,8 +32,8 @@ container health check verifies its PostgreSQL heartbeat.
 - `migrations/`: canonical PostgreSQL schema, owned by the Go migration command.
 - `src/article_scraper_lab/postgres_gateway.py`: thin middleware repository.
 - `cmd/worker` and `internal/`: Go background engine.
-- Existing Python scraper modules remain only as the v0.3.1 oracle and local
-  SQLite compatibility path when `DATABASE_URL` is unset.
+- FastAPI has no local scraper or SQLite fallback. `DATABASE_URL` is mandatory;
+  all scraping, discovery, extraction, and classification run in the Go worker.
 
-No SQLite data is migrated. Do not run the hybrid stack against the legacy
-SQLite file or expose the development database passwords in production.
+Legacy SQLite data is not read or migrated. Do not expose the development
+database passwords in production.

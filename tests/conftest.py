@@ -1,40 +1,24 @@
-"""Keep tests independent of local credentials and the user's article database."""
+"""Keep middleware tests independent of local credentials and PostgreSQL."""
+
+from types import SimpleNamespace
 
 import pytest
 
 from article_scraper_lab.config import get_settings
-from article_scraper_lab.dependencies import (
-    get_job_manager,
-    get_postgres_gateway,
-    get_rate_limiter,
-    get_scraper_service,
-)
+from article_scraper_lab.dependencies import get_postgres_gateway
+from article_scraper_lab.main import app
 
 
 @pytest.fixture(autouse=True)
-def isolated_environment(monkeypatch, tmp_path):
-    values = {
-        "SCRAPER_API_KEY": "",
-        "SERPAPI_API_KEY": "",
-        "REQUIRE_API_KEY": "false",
-        "DATABASE_PATH": str(tmp_path / "test.db"),
-        "DATABASE_URL": "",
-        "ALLOWED_DOMAINS": "",
-        "ALLOW_HTTP": "false",
-        "RESPECT_ROBOTS": "true",
-        "ROBOTS_FAIL_CLOSED": "true",
-    }
-    for key, value in values.items():
-        monkeypatch.setenv(key, value)
-    caches = (
-        get_settings,
-        get_scraper_service,
-        get_job_manager,
-        get_rate_limiter,
-        get_postgres_gateway,
-    )
-    for factory in caches:
-        factory.cache_clear()
+def isolated_environment(monkeypatch):
+    monkeypatch.setenv("SCRAPER_API_KEY", "")
+    monkeypatch.setenv("REQUIRE_API_KEY", "false")
+    monkeypatch.setenv("DATABASE_URL", "postgres://test.invalid/article_scraper")
+    gateway = SimpleNamespace(health=lambda: True, recent=lambda: [])
+    get_settings.cache_clear()
+    get_postgres_gateway.cache_clear()
+    app.dependency_overrides[get_postgres_gateway] = lambda: gateway
     yield
-    for factory in caches:
-        factory.cache_clear()
+    app.dependency_overrides.clear()
+    get_postgres_gateway.cache_clear()
+    get_settings.cache_clear()

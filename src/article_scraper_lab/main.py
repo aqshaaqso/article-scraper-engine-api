@@ -8,7 +8,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from . import __version__
-from .dependencies import get_job_manager
+from .dependencies import get_postgres_gateway
 from .errors import ExtractionError, FetchError, JobNotFoundError, RobotsDeniedError, UnsafeUrlError
 from .request_context import request_id_var
 from .routes import job_router, router, search_router, system_router
@@ -16,10 +16,10 @@ from .routes import job_router, router, search_router, system_router
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    manager = get_job_manager()
-    manager.start()
+    gateway = get_postgres_gateway()
+    gateway.start()
     yield
-    manager.shutdown()
+    gateway.shutdown()
 
 
 app = FastAPI(
@@ -61,6 +61,11 @@ def swagger_ui() -> HTMLResponse:
         title=f"{app.title} - Swagger UI",
         swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
         swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css",
+        swagger_ui_parameters={
+            "displayRequestDuration": True,
+            "filter": True,
+            "persistAuthorization": True,
+        },
     )
 
 

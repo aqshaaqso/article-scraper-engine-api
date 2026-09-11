@@ -58,7 +58,7 @@ func TestWindowUsesUTCDateOnly(t *testing.T) {
 
 func TestNormalizeOptionalDateRanges(t *testing.T) {
 	now := time.Date(2026, 9, 10, 1, 0, 0, 0, time.UTC)
-	day, month, year := 5, 2, 2024
+	day, month, currentMonth, year, currentYear := 5, 2, 9, 2024, 2026
 	cases := []struct {
 		name      string
 		req       Request
@@ -67,7 +67,9 @@ func TestNormalizeOptionalDateRanges(t *testing.T) {
 	}{
 		{"day", Request{Day: &day, Timezone: "Asia/Jakarta"}, "2026-09-05", "2026-09-05"},
 		{"month", Request{Month: &month, Timezone: "Asia/Jakarta"}, "2026-02-01", "2026-02-28"},
+		{"current month", Request{Month: &currentMonth, Timezone: "Asia/Jakarta"}, "2026-09-01", "2026-09-10"},
 		{"year", Request{Year: &year, Timezone: "Asia/Jakarta"}, "2024-01-01", "2024-12-31"},
+		{"current year", Request{Year: &currentYear, Timezone: "Asia/Jakarta"}, "2026-01-01", "2026-09-10"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,6 +80,25 @@ func TestNormalizeOptionalDateRanges(t *testing.T) {
 				t.Fatalf("got %v - %v", tc.req.StartDate, tc.req.EndDate)
 			}
 		})
+	}
+}
+
+func TestNormalizeRejectsFutureDates(t *testing.T) {
+	now := time.Date(2026, 9, 10, 1, 0, 0, 0, time.UTC)
+	day, month, year := 11, 10, 2027
+	startFuture := "2026-09-11"
+	start, endFuture := "2026-09-01", "2026-09-11"
+	cases := []Request{
+		{Day: &day, Timezone: "Asia/Jakarta"},
+		{Month: &month, Timezone: "Asia/Jakarta"},
+		{Year: &year, Timezone: "Asia/Jakarta"},
+		{StartDate: &startFuture, Timezone: "Asia/Jakarta"},
+		{StartDate: &start, EndDate: &endFuture, Timezone: "Asia/Jakarta"},
+	}
+	for _, req := range cases {
+		if err := normalizeDateRange(&req, now); err == nil {
+			t.Fatalf("expected future date rejection for %+v", req)
+		}
 	}
 }
 

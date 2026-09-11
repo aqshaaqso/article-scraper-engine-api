@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "article-scraper-lab"
-version = "0.3.1"
+version = "0.4.0"
 description = "FastAPI middleware for the PostgreSQL-backed Go article scraper"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,12 +16,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-oracle = [
-    "beautifulsoup4>=4.12,<5.0",
-    "httpx2>=2.12,<3.0",
-    "lxml-html-clean>=0.4,<1.0",
-    "trafilatura>=2.2,<3.0",
-]
 dev = [
     "pytest>=8.3,<9.0",
     "ruff>=0.12,<1.0",

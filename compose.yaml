@@ -38,7 +38,6 @@ services:
         required: false
     environment:
       DATABASE_URL: postgres://scraper_api:scraper-api-dev@postgres:5432/article_scraper?sslmode=disable
-      DATABASE_PATH: ""
       REQUIRE_API_KEY: "true"
       SCRAPER_API_KEY: ${SCRAPER_API_KEY:-dev-api-key}
     ports: ["${API_PORT:-8010}:8010"]
@@ -57,6 +56,7 @@ services:
         required: false
     environment:
       DATABASE_URL: postgres://scraper_worker:scraper-worker-dev@postgres:5432/article_scraper?sslmode=disable
+      # Do not leak the removed Python/SQLite engine setting from an older .env.
       DATABASE_PATH: ""
     depends_on:
       migrate:

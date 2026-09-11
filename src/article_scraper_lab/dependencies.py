@@ -1,4 +1,4 @@
-"""FastAPI dependency wiring."""
+"""FastAPI dependency wiring for the PostgreSQL-backed Go engine."""
 
 from functools import lru_cache
 from hmac import compare_digest
@@ -14,67 +14,10 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 @lru_cache
-def get_rate_limiter():
-    from .rate_limiter import DomainRateLimiter
-
-    return DomainRateLimiter(get_settings().domain_delay_seconds)
-
-
-@lru_cache
-def get_scraper_service():
-    settings = get_settings()
-    if settings.database_url:
-        return get_postgres_gateway()
-    from .extractor import ArticleExtractor
-    from .http_client import SecureHttpClient
-    from .robots import RobotsChecker
-    from .security import UrlPolicy
-    from .service import ArticleScraperService
-    policy = UrlPolicy(
-        allow_http=settings.allow_http,
-        allowed_domains=settings.allowed_domains,
-    )
-    client = SecureHttpClient(
-        policy,
-        timeout_seconds=settings.timeout_seconds,
-        max_bytes=settings.max_html_bytes,
-        max_redirects=settings.max_redirects,
-        user_agent=settings.user_agent,
-    )
-    robots = RobotsChecker(
-        client,
-        user_agent=settings.user_agent,
-        enabled=settings.respect_robots,
-        fail_closed=settings.robots_fail_closed,
-    )
-    return ArticleScraperService(
-        policy=policy,
-        client=client,
-        robots=robots,
-        extractor=ArticleExtractor(settings.min_word_count),
-        limiter=get_rate_limiter(),
-    )
-
-
-@lru_cache
-def get_job_manager():
-    settings = get_settings()
-    if settings.database_url:
-        return get_postgres_gateway()
-    from .job_manager import JobManager
-    from .job_store import JobStore
-    return JobManager(
-        store=JobStore(settings.database_path),
-        service=get_scraper_service(),
-        worker_count=settings.worker_count,
-    )
-
-
-@lru_cache
 def get_postgres_gateway() -> PostgresGateway:
     settings = get_settings()
     if not settings.database_url:
-        raise RuntimeError("DATABASE_URL wajib diisi untuk mode middleware")
+        raise RuntimeError("DATABASE_URL wajib diisi untuk middleware Go/PostgreSQL")
     return PostgresGateway(
         settings.database_url,
         worker_count=settings.worker_count,
@@ -96,6 +39,5 @@ def require_api_key(
 
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-ScraperServiceDep = Annotated[object, Depends(get_scraper_service)]
-JobManagerDep = Annotated[object, Depends(get_job_manager)]
+PostgresGatewayDep = Annotated[PostgresGateway, Depends(get_postgres_gateway)]
 ApiKeyDep = Annotated[None, Depends(require_api_key)]

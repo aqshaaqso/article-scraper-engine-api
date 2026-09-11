@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -50,7 +49,6 @@ class Settings:
     allowed_domains: tuple[str, ...]
     worker_count: int
     domain_delay_seconds: float
-    database_path: Path
     api_key: str | None
     serpapi_api_key: str | None = None
     database_url: str | None = None
@@ -67,9 +65,6 @@ class Settings:
             for domain in os.getenv("ALLOWED_DOMAINS", "").split(",")
             if domain.strip()
         )
-        database_path = Path(os.getenv("DATABASE_PATH", "data/article_scraper.db"))
-        if not database_path.is_absolute():
-            database_path = Path(__file__).resolve().parents[2] / database_path
         return cls(
             timeout_seconds=_positive_float("HTTP_TIMEOUT_SECONDS", 15),
             max_html_bytes=_positive_integer("MAX_HTML_BYTES", 5 * 1024 * 1024),
@@ -85,7 +80,6 @@ class Settings:
             allowed_domains=domains,
             worker_count=_positive_integer("WORKER_COUNT", 3),
             domain_delay_seconds=_positive_float("DOMAIN_DELAY_SECONDS", 1.0),
-            database_path=database_path,
             api_key=api_key,
             serpapi_api_key=os.getenv("SERPAPI_API_KEY", "").strip() or None,
             database_url=os.getenv("DATABASE_URL", "").strip() or None,

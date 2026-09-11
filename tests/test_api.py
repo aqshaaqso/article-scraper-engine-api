@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from article_scraper_lab.config import get_settings
-from article_scraper_lab.dependencies import get_job_manager, get_scraper_service
+from article_scraper_lab.dependencies import get_postgres_gateway
 from article_scraper_lab.main import app
 
 
@@ -16,7 +16,8 @@ def test_swagger_and_health_are_available() -> None:
     assert "Swagger UI" in swagger.text
     assert "SwaggerUIBundle" in swagger.text
     assert "swagger-ui-dist@5" in swagger.text
-    assert 'url: \'/openapi.json\'' in swagger.text
+    assert "url: '/openapi.json'" in swagger.text
+    assert '"persistAuthorization": true' in swagger.text
 
     openapi = client.get("/openapi.json")
     assert openapi.status_code == 200
@@ -25,14 +26,24 @@ def test_swagger_and_health_are_available() -> None:
     assert "/v1/articles/scrape" in app.openapi()["paths"]
 
 
-def test_api_rejects_loopback_before_network_access() -> None:
-    get_scraper_service.cache_clear()
-    response = TestClient(app).post(
-        "/v1/articles/scrape",
-        json={"url": "https://127.0.0.1/private"},
-    )
-    assert response.status_code == 422
-    assert response.json()["error"] == "unsafe_url"
+def test_search_swagger_has_date_filter_examples_and_api_key_authorization() -> None:
+    schema = app.openapi()
+    examples = schema["paths"]["/v1/search/jobs"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["examples"]
+
+    assert set(examples) == {"general", "day", "month", "year", "start_date", "range"}
+    assert examples["general"]["value"] == {
+        "query": "Indonesia",
+        "max_articles": 10,
+        "max_pages": 1,
+    }
+    assert examples["range"]["value"]["start_date"] == "2025-07-15"
+    assert schema["components"]["securitySchemes"]["APIKeyHeader"] == {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+    }
 
 
 def test_root_redirects_to_swagger() -> None:
@@ -40,16 +51,6 @@ def test_root_redirects_to_swagger() -> None:
     assert response.status_code == 307
     assert response.headers["location"] == "/swagger/index.html"
     assert TestClient(app).get("/dashboard").status_code == 404
-
-
-def test_async_job_rejects_unsafe_url_before_queueing() -> None:
-    get_scraper_service.cache_clear()
-    response = TestClient(app).post(
-        "/v1/jobs",
-        json={"urls": ["https://127.0.0.1/private"]},
-    )
-    assert response.status_code == 422
-    assert response.json()["error"] == "unsafe_url"
 
 
 def test_async_job_is_limited_to_one_hundred_urls() -> None:
@@ -60,16 +61,13 @@ def test_async_job_is_limited_to_one_hundred_urls() -> None:
 def test_api_key_protects_job_history_when_configured(monkeypatch) -> None:
     monkeypatch.setenv("SCRAPER_API_KEY", "test-secret")
     get_settings.cache_clear()
-    get_job_manager.cache_clear()
     try:
-        with TestClient(app) as client:
-            assert client.get("/v1/jobs").status_code == 401
-            assert client.get("/v1/jobs", headers={"X-API-Key": "wrong"}).status_code == 401
-            assert (
-                client.get("/v1/jobs", headers={"X-API-Key": "test-secret"}).status_code == 200
-            )
+        client = TestClient(app)
+        assert client.get("/v1/jobs").status_code == 401
+        assert client.get("/v1/jobs", headers={"X-API-Key": "wrong"}).status_code == 401
+        assert client.get("/v1/jobs", headers={"X-API-Key": "test-secret"}).status_code == 200
     finally:
-        get_job_manager.cache_clear()
+        get_postgres_gateway.cache_clear()
         get_settings.cache_clear()
 
 
