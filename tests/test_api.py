@@ -53,6 +53,14 @@ def test_root_redirects_to_swagger() -> None:
     assert TestClient(app).get("/dashboard").status_code == 404
 
 
+def test_malformed_job_and_search_ids_are_rejected_before_database_access() -> None:
+    client = TestClient(app)
+
+    assert client.get("/v1/jobs/not-a-uuid").status_code == 422
+    assert client.get("/v1/search/runs/not-a-uuid").status_code == 422
+    assert client.post("/v1/search/runs/not-a-uuid/continue").status_code == 422
+
+
 def test_async_job_is_limited_to_one_hundred_urls() -> None:
     schema = app.openapi()["components"]["schemas"]["BatchScrapeRequest"]
     assert schema["properties"]["urls"]["maxItems"] == 100

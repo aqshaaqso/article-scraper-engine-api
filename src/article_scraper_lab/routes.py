@@ -1,6 +1,7 @@
 """Article scraper HTTP routes."""
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import PlainTextResponse
@@ -57,7 +58,7 @@ def create_job(
 
 @job_router.get("/{job_id}", summary="Pantau progres dan hasil job")
 def get_job(
-    job_id: str,
+    job_id: UUID,
     gateway: PostgresGatewayDep,
     _api_key: ApiKeyDep,
     include_excluded: Annotated[
@@ -70,7 +71,7 @@ def get_job(
         ),
     ] = False,
 ) -> JobResponse:
-    return _filter_job_items(gateway.get(job_id), include_excluded)
+    return _filter_job_items(gateway.get(job_id.hex), include_excluded)
 
 
 @job_router.get("", summary="Lihat job terbaru")
@@ -194,11 +195,11 @@ def recent_searches(
 
 @search_router.get("/runs/{search_id}", summary="Progres bulanan dan laporan tanggal artikel")
 def search_progress(
-    search_id: str,
+    search_id: UUID,
     gateway: PostgresGatewayDep,
     _api_key: ApiKeyDep,
 ) -> SearchProgress:
-    return gateway.search_progress(search_id)
+    return gateway.search_progress(search_id.hex)
 
 
 @search_router.post(
@@ -210,11 +211,11 @@ def search_progress(
     "panggilan ini tidak melakukan pencarian atau membuat job baru.",
 )
 def continue_search(
-    search_id: str,
+    search_id: UUID,
     gateway: PostgresGatewayDep,
     _api_key: ApiKeyDep,
 ) -> SearchAccepted:
-    return gateway.continue_search(search_id)
+    return gateway.continue_search(search_id.hex)
 
 
 @system_router.get("/health", summary="Periksa konfigurasi scraper")

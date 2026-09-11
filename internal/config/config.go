@@ -33,7 +33,7 @@ func Load() (Config, error) {
 	c := Config{
 		DatabaseURL: os.Getenv("DATABASE_URL"), SerpAPIKey: os.Getenv("SERPAPI_API_KEY"),
 		AllowedDomains: splitDomains(os.Getenv("ALLOWED_DOMAINS")),
-		UserAgent:      value("SCRAPER_USER_AGENT", "ArticleScraperLab/0.3-go"),
+		UserAgent:      value("SCRAPER_USER_AGENT", "ArticleScraperLab/0.4-go"),
 		WorkerID:       value("WORKER_ID", host+"-worker"),
 	}
 	var err error
